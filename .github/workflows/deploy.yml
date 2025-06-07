@@ -1,0 +1,71 @@
+name: Deploy to VM
+
+on:
+  push:
+    branches: [lab1314]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Check SSH key contents
+        run: |
+          echo "${{ secrets.VM_SSH_KEY }}" | head -n 5
+
+      - name: Kill old Process
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          script: |
+            echo "Killing old Java proces..."
+            SSH_PID=$$
+            ps -ef | grep '[j]ava.*\.jar' | grep -v $SSH_PID | awk '{print $2}' | xargs -r kill -15
+            echo "Done killing"
+
+      - name: Build project
+        run: mvn clean package
+
+      - name: Test SSH Connection
+        run: |
+          echo "${{ secrets.VM_SSH_KEY }}" > key.pem
+          chmod 600 key.pem
+          ssh -i key.pem -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "echo SUCCESS"
+
+      - name: Copy JAR to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          source: target/demo1-0.0.1-SNAPSHOT.jar
+          target: /home/${{ secrets.VM_USER }}/app/
+
+      - name: Start app on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          script: |
+            JAR=/home/${{ secrets.VM_USER }}/app/target/demo1-0.0.1-SNAPSHOT.jar
+            echo "Starting new Java process with $JAR"
+            nohup setsid java -jar "$JAR" > /home/${{ secrets.VM_USER }}/app/log.txt 2>&1 < /dev/null &
+            sleep 2
+            echo "Process list:"
+            pgrep -af 'java.*\.jar' || echo "No Java process found"
+            echo "Last 10 log lines:"
+            tail -n 10 /home/${{ secrets.VM_USER }}/app/log.txt || true
