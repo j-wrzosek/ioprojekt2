@@ -1,4 +1,4 @@
-package com.example.demo;
+package org.example.demo;
 
 public class UserData {
     public int userid;
